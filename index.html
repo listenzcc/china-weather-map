@@ -61,7 +61,58 @@
       }
       #map {
         position: absolute;
-        inset: 0;
+        top: 0;
+        left: 0;
+        right: 0;
+        bottom: 300px;
+      }
+      .bottom {
+        position: absolute;
+        left: 0;
+        right: 0;
+        bottom: 0;
+        height: 300px;
+        display: flex;
+        flex-direction: column;
+        background: var(--panel);
+        border-top: 1px solid var(--line);
+      }
+      .tabs {
+        display: flex;
+        gap: 8px;
+        padding: 8px 12px 0;
+      }
+      .tab {
+        border: 1px solid var(--line);
+        background: #fff;
+        border-radius: 8px 8px 0 0;
+        padding: 6px 14px;
+        cursor: pointer;
+        font-size: 13px;
+        color: var(--sub);
+      }
+      .tab.on {
+        background: var(--accent2);
+        color: #fff;
+        border-color: var(--accent2);
+        font-weight: 600;
+      }
+      #cal {
+        flex: 1;
+        position: relative;
+        box-sizing: border-box;
+        padding: 6px 12px 2px;
+      }
+      #cal h3 {
+        margin: 0 0 2px;
+        font-size: 12px;
+        font-weight: 600;
+        color: var(--ink);
+      }
+      #cal footer {
+        position: static;
+        text-align: left;
+        margin: 2px 0 0;
       }
       .block {
         margin-bottom: 18px;
@@ -179,6 +230,24 @@
       .layer-row input {
         margin: 0;
       }
+      .seg {
+        display: flex;
+        gap: 6px;
+      }
+      .seg button {
+        flex: 1;
+        border: 1px solid var(--line);
+        background: #fff;
+        border-radius: 8px;
+        padding: 8px 0;
+        cursor: pointer;
+        font-size: 13px;
+      }
+      .seg button.on {
+        background: var(--accent2);
+        color: #fff;
+        border-color: var(--accent2);
+      }
       footer {
         position: absolute;
         right: 14px;
@@ -208,8 +277,17 @@
           <div class="hint" id="metricHint"></div>
         </div>
 
-        <div class="block">
-          <h3>日期</h3>
+          <div class="block">
+            <h3>评分模式</h3>
+            <div class="seg" id="mode">
+              <button data-mode="relative" class="on">相对适宜度</button>
+              <button data-mode="absolute">绝对舒适度</button>
+            </div>
+            <div class="hint" id="modeHint"></div>
+          </div>
+
+          <div class="block">
+            <h3>日期</h3>
           <div class="datebar">
             <span class="dlabel" id="dateLabel">1月1日</span>
           </div>
@@ -268,33 +346,42 @@
         </div>
 
         <div class="block">
-          <h3>当日最适宜（Top 8）</h3>
+          <h3>当日最适宜（Top 10）</h3>
           <div class="top" id="topList">加载中…</div>
         </div>
       </aside>
       <div class="main">
         <div id="map"></div>
-        <footer>
-          数据源：Open-Meteo Historical Archive · 底图：DataV.GeoAtlas
-        </footer>
+        <div class="bottom">
+          <div class="tabs">
+            <button id="tabCal" class="tab on">全年日历</button>
+            <button id="tabRank" class="tab">年度总榜</button>
+          </div>
+          <div id="cal">
+            <h3>全年每日全国 Top 10（悬停看名单 · 点击定位到当天）</h3>
+            <footer>
+              数据源：Open-Meteo Historical Archive · 底图：DataV.GeoAtlas
+            </footer>
+          </div>
+        </div>
       </div>
     </div>
 
     <script>
       const PRESET = {
         livability: {
-          Wt: 12,
-          k: 18,
+          Wt: 7, // 温度钟形宽度 σ（℃）：越小越严格，舒适区内也有梯度
+          k: 12, // 降雨惩罚尺度（mm）：越大越容忍雨
           w: 0.3,
           label: "宜居",
-          hint: "宜居偏重气候温和稳定：温度区间较严格，降雨影响较小（雨天可室内活动）。",
+          hint: "宜居偏重气候温和稳定：温度钟形较窄（严格），降雨容忍度较高（雨天可室内活动）。",
         },
         travel: {
-          Wt: 20,
-          k: 10,
+          Wt: 12,
+          k: 8,
           w: 0.5,
           label: "宜旅行",
-          hint: "宜旅行更能容忍温度波动，但更怕雨：降雨权重更高、敏感度更强（雨天影响出行）。",
+          hint: "宜旅行更能容忍温度波动（钟形更宽），但更怕雨：降雨惩罚更陡（雨天直接影响出行）。",
         },
       };
       const COLOR = [
@@ -315,36 +402,70 @@
         w: 0.3,
         playing: false,
         speed: 4,
+        mode: "relative",
+        view: "cal", // 'cal' 全年日历 | 'rank' 年度总榜
         layers: { rivers: true, lakes: true, mountains: true },
       };
       let DATA = null,
         chart = null,
+        chart2 = null,
         timer = null,
         cityPoints = [],
-        GEO_FEATURES = null;
+        GEO_FEATURES = null,
+        CAL_TOP = null, // 按天缓存的 Top10：{ day: [{name,score,T,P}] }
+        calKey = null, // 参数指纹，变化才重算全年日历
+        calReady = false,
+        rawStore = null, // 每城每日原始舒适度 0-1 矩阵（与 mode 无关）
+        rawKey = null,
+        dayStats = null, // 每城每日最终分 0-100 矩阵（依赖 mode）
+        dayStatsKey = null,
+        rankCache = null, // 城市年度累计分排序结果（Top 全量）
+        rankKey = null,
+        bottomView = null; // 当前底部视图，用于切换时强制重绘
+
+      // 参数指纹：原始舒适度只依赖 维度/温度区间/降雨权重
+      function sigParams() {
+        return [state.metric, state.tmin, state.tmax, state.w].join(",");
+      }
+      // 含评分模式：影响归一化，日历与年度榜都用它
+      function sigMode() {
+        return state.mode + "|" + sigParams();
+      }
 
       function doyToDate(d) {
         const x = new Date(2001, 0, 1);
         x.setDate(x.getDate() + d - 1);
         return x.getMonth() + 1 + "月" + x.getDate() + "日";
       }
-      function tempSuit(T, a, b, Wt) {
-        let d = 0;
-        if (T < a) d = a - T;
-        else if (T > b) d = T - b;
-        return Math.max(0, 1 - d / Wt);
+      // 当天对应的 ISO 日期（用 2021 非闰年铺满 365 天，仅作日历坐标）
+      function dayToISO(d) {
+        const x = new Date(2021, 0, 1);
+        x.setDate(x.getDate() + d - 1);
+        const m = String(x.getMonth() + 1).padStart(2, "0");
+        const dd = String(x.getDate()).padStart(2, "0");
+        return "2021-" + m + "-" + dd;
       }
-      function rainSuit(P, k) {
-        return 1 / (1 + P / k);
-      }
-      function scoreOf(c) {
-        const T = c.T[state.day - 1],
-          P = c.P[state.day - 1];
+      // 温度舒适度：以舒适区间中心为峰的洛伦兹钟形 1/(1+z²)
+      // 中心最舒适、向两边平滑下降，舒适区内也有梯度、区间外不再硬归零
+      function tempBell(T, a, b, sigma) {
         if (T == null) return null;
-        const p = PRESET[state.metric];
-        const ts = tempSuit(T, state.tmin, state.tmax, p.Wt);
-        const rs = rainSuit(P == null ? 0 : P, p.k);
-        return Math.round(100 * ((1 - state.w) * ts + state.w * rs));
+        const mid = (a + b) / 2;
+        const z = (T - mid) / sigma;
+        return 1 / (1 + z * z);
+      }
+      // 降雨舒适度：0 雨=1，雨越多越低（惩罚随 k 递减）
+      function rainSuit(P, k) {
+        return 1 / (1 + (P == null ? 0 : P) / k);
+      }
+      // 原始舒适度 0-1（未归一化），温度缺失返回 null
+      function rawComfort(c, day, a, b, sigma, w, metric) {
+        const T = c.T[day - 1];
+        if (T == null) return null;
+        const P = c.P[day - 1];
+        const p = PRESET[metric];
+        const ts = tempBell(T, a, b, sigma);
+        const rs = rainSuit(P, p.k);
+        return (1 - w) * ts + w * rs;
       }
 
       function layerSeries() {
@@ -392,25 +513,90 @@
       }
 
       function render() {
-        const mapData = DATA
-          ? DATA.cities.map((c) => ({ name: c.name, value: scoreOf(c) }))
-          : [];
+        if (!DATA) return;
+        const day = state.day;
+        const a = state.tmin,
+          b = state.tmax;
+        const p = PRESET[state.metric];
+        const w = state.w;
+        const sigma = p.Wt; // Wt 现在表示钟形宽度 σ
+        // 1) 当天每个城市的原始舒适度 0-1
+        const arr = DATA.cities.map((c) => {
+          const raw = rawComfort(c, day, a, b, sigma, w, state.metric);
+          return { name: c.name, raw, T: c.T[day - 1], P: c.P[day - 1] };
+        });
+        // 2) 相对模式：按当天所有城市排名做百分位数归一化（0-100）
+        let rankMap = null;
+        if (state.mode === "relative") {
+          const valid = arr
+            .filter((x) => x.raw != null)
+            .sort((x, y) => x.raw - y.raw);
+          const n = valid.length;
+          rankMap = new Map();
+          valid.forEach((x, i) =>
+            rankMap.set(x.name, n > 1 ? (i / (n - 1)) * 100 : 50),
+          );
+        }
+        const scoreOf = (x) =>
+          x.raw == null
+            ? null
+            : state.mode === "relative"
+              ? rankMap.get(x.name)
+              : x.raw * 100;
+        const mapData = arr.map((x) => ({ name: x.name, value: scoreOf(x) }));
+        // 年度总榜视图：地图叠加 Top30 醒目标注
+        const annualTop = state.view === "rank" ? annualTopPoints(30) : [];
         chart.setOption({
-          series: [{ data: mapData }, { data: cityPoints }, ...layerSeries()],
+          series: [
+            { data: mapData },
+            { data: cityPoints },
+            ...layerSeries(),
+            {
+              name: "年度Top30",
+              type: "scatter",
+              coordinateSystem: "geo",
+              data: annualTop.map((c) => ({
+                name: c.name,
+                value: [c.lon, c.lat],
+                total: c.total,
+              })),
+              symbolSize: 13,
+              itemStyle: {
+                color: "#e8590c",
+                borderColor: "#fff",
+                borderWidth: 1.2,
+              },
+              label: {
+                show: true,
+                formatter: (p) => p.name,
+                position: "right",
+                fontSize: 11,
+                fontWeight: "bold",
+                color: "#c2410c",
+              },
+              zlevel: 6,
+              tooltip: { show: true },
+            },
+          ],
+          visualMap: [
+            {
+              seriesIndex: 0,
+              min: 0,
+              max: 100,
+              text: [
+                state.mode === "relative" ? "相对最适宜" : "最适宜",
+                state.mode === "relative" ? "相对最不宜" : "最不宜",
+              ],
+            },
+          ],
           graphic: [{ id: "dateBig", style: { text: doyToDate(state.day) } }],
         });
-        if (!DATA) return;
         // top list
-        const ranked = DATA.cities
-          .map((c) => ({
-            n: c.name,
-            s: scoreOf(c),
-            T: c.T[state.day - 1],
-            P: c.P[state.day - 1],
-          }))
-          .filter((x) => x.s != null)
-          .sort((a, b) => b.s - a.s)
-          .slice(0, 8);
+        const ranked = arr
+          .filter((x) => x.raw != null)
+          .map((x) => ({ n: x.name, s: Math.round(scoreOf(x)), T: x.T, P: x.P }))
+          .sort((x, y) => y.s - x.s)
+          .slice(0, 10);
         document.getElementById("topList").innerHTML = ranked
           .map(
             (x, i) =>
@@ -419,6 +605,298 @@
           )
           .join("");
         document.getElementById("dateLabel").textContent = doyToDate(state.day);
+        refreshBottom();
+      }
+
+      // 全年日历热力图：每格=当天最优城市分数，悬停列 Top10，点击定位
+      function refreshCalendar() {
+        if (!DATA || !chart2) return;
+        const key = sigMode();
+        if (key === calKey && calReady) return; // 参数没变，跳过全年重算
+        calKey = key;
+        const a = state.tmin,
+          b = state.tmax;
+        const p = PRESET[state.metric];
+        const w = state.w;
+        const sigma = p.Wt;
+        const days = DATA.days || 365;
+        const top = {};
+        const cells = [];
+        for (let day = 1; day <= days; day++) {
+          const arr = DATA.cities
+            .map((c) => {
+              const raw = rawComfort(c, day, a, b, sigma, w, state.metric);
+              return { name: c.name, raw, T: c.T[day - 1], P: c.P[day - 1] };
+            })
+            .filter((x) => x.raw != null);
+          let scores = null;
+          if (state.mode === "relative") {
+            const valid = arr.slice().sort((x, y) => x.raw - y.raw);
+            const n = valid.length;
+            scores = new Map();
+            valid.forEach((x, i) =>
+              scores.set(x.name, n > 1 ? (i / (n - 1)) * 100 : 50),
+            );
+          }
+          const ranked = arr.slice().sort((x, y) => y.raw - x.raw);
+          const top10 = ranked.slice(0, 10).map((x) => ({
+            name: x.name,
+            score:
+              state.mode === "relative"
+                ? Math.round(scores.get(x.name))
+                : Math.round(x.raw * 100),
+            T: x.T,
+            P: x.P,
+          }));
+          top[day] = top10;
+          cells.push([dayToISO(day), top10[0].score, day - 1]);
+        }
+        CAL_TOP = top;
+        calReady = true;
+        chart2.setOption(
+          {
+            tooltip: {
+              formatter: (pp) => {
+                const day = pp.data[2] + 1;
+                const list = CAL_TOP[day];
+                return (
+                  "<b>" +
+                  doyToDate(day) +
+                  "</b> 全国 Top 10<br/>" +
+                  list
+                    .map(
+                      (x, i) =>
+                        i +
+                        1 +
+                        ". " +
+                        x.name +
+                        " " +
+                        x.score +
+                        "分 " +
+                        x.T +
+                        "℃ 雨" +
+                        x.P +
+                        "mm",
+                    )
+                    .join("<br/>")
+                );
+              },
+            },
+            visualMap: {
+              min: 0,
+              max: 100,
+              calculable: true,
+              orient: "horizontal",
+              left: "center",
+              bottom: 0,
+              itemHeight: 80,
+              text: [
+                state.mode === "relative" ? "相对最适宜" : "最适宜",
+                state.mode === "relative" ? "相对最不宜" : "最不宜",
+              ],
+              inRange: { color: COLOR },
+              formatter: (v) => Math.round(v),
+            },
+            calendar: {
+              top: 44,
+              left: 28,
+              right: 12,
+              cellSize: ["auto", 13],
+              range: "2021",
+              itemStyle: { borderWidth: 0.5, borderColor: "#fff" },
+              yearLabel: { show: false },
+              dayLabel: { firstDay: 1, nameMap: ["日", "一", "二", "三", "四", "五", "六"] },
+              monthLabel: { nameMap: "cn" },
+            },
+            series: [{ type: "heatmap", coordinateSystem: "calendar", data: cells }],
+          },
+          true,
+        );
+      }
+
+      // —— 年度总榜：每城“每日适宜度分 × 365 天”累加 ——
+      // 原始舒适度矩阵只依赖 维度/温度区间/降雨权重（与 mode 无关），单独缓存
+      function ensureRaw() {
+        const k = sigParams();
+        if (k === rawKey && rawStore) return;
+        rawKey = k;
+        const cities = DATA.cities,
+          N = DATA.days || 365;
+        const a = state.tmin,
+          b = state.tmax,
+          sigma = PRESET[state.metric].Wt,
+          w = state.w;
+        rawStore = cities.map((c) => {
+          const out = new Array(N);
+          for (let d = 0; d < N; d++)
+            out[d] = rawComfort(c, d + 1, a, b, sigma, w, state.metric);
+          return out;
+        });
+      }
+      // 每日最终分 0-100（相对模式按当天排名归一化，绝对模式直接 ×100）
+      function ensureDayStats() {
+        ensureRaw();
+        const k = sigMode();
+        if (k === dayStatsKey && dayStats) return;
+        dayStatsKey = k;
+        const cities = DATA.cities,
+          N = DATA.days || 365,
+          n = cities.length;
+        dayStats = new Array(N);
+        for (let d = 0; d < N; d++) {
+          const arr = [];
+          for (let ci = 0; ci < n; ci++) {
+            const r = rawStore[ci][d];
+            if (r != null) arr.push([ci, r]);
+          }
+          const m = {};
+          if (state.mode === "absolute") {
+            arr.forEach(([ci, r]) => (m[ci] = r * 100));
+          } else {
+            const sorted = arr.slice().sort((x, y) => x[1] - y[1]);
+            const cnt = sorted.length;
+            sorted.forEach(([ci], i) => (m[ci] = cnt > 1 ? (i / (cnt - 1)) * 100 : 50));
+          }
+          dayStats[d] = m;
+        }
+      }
+      // 年度 Top N 城市（带经纬度），供地图标注
+      function annualTopPoints(n) {
+        ensureDayStats();
+        const cities = DATA.cities, N = DATA.days || 365;
+        const totals = cities
+          .map((c, ci) => {
+            let sum = 0, cnt = 0;
+            for (let d = 0; d < N; d++) {
+              const sc = dayStats[d][ci];
+              if (sc != null) { sum += sc; cnt++; }
+            }
+            return { name: c.name, ci, total: sum, days: cnt, avg: cnt ? sum / cnt : 0 };
+          })
+          .filter((x) => x.days > 0)
+          .sort((x, y) => y.total - x.total)
+          .slice(0, n)
+          .map((x) => ({
+            name: x.name, total: x.total, avg: x.avg, days: x.days,
+            lon: cities[x.ci].lon, lat: cities[x.ci].lat,
+          }));
+        return totals;
+      }
+      function refreshRank() {
+        if (!DATA || !chart2) return;
+        const key = sigMode();
+        if (key !== rankKey || !rankCache) {
+          rankKey = key;
+          ensureDayStats();
+          const cities = DATA.cities,
+            N = DATA.days || 365,
+            n = cities.length;
+          const totals = cities.map((c, ci) => {
+            let sum = 0,
+              cnt = 0;
+            for (let d = 0; d < N; d++) {
+              const sc = dayStats[d][ci];
+              if (sc != null) {
+                sum += sc;
+                cnt++;
+              }
+            }
+            return { name: c.name, total: sum, days: cnt, avg: cnt ? sum / cnt : 0 };
+          }).filter((x) => x.days > 0);
+          totals.sort((x, y) => y.total - x.total);
+          rankCache = totals;
+        }
+        const top = rankCache.slice(0, 30);
+        const maxT = top.length ? top[0].total : 1;
+        chart2.setOption(
+          {
+            title: {
+              text:
+                "全国城市年度累计适宜度（" +
+                (state.mode === "relative" ? "相对分" : "绝对分") +
+                " × 365 天）Top 30",
+              left: "center",
+              top: 6,
+              textStyle: { fontSize: 13, fontWeight: 600, color: "#1f2329" },
+            },
+            grid: { left: 92, right: 64, top: 34, bottom: 8 },
+            tooltip: {
+              trigger: "axis",
+              axisPointer: { type: "shadow" },
+              formatter: (ps) => {
+                const x = top[ps[0].dataIndex];
+                return (
+                  "<b>" +
+                  x.name +
+                  "</b><br/>年度累计 <b>" +
+                  Math.round(x.total) +
+                  "</b><br/>日均 " +
+                  x.avg.toFixed(1) +
+                  " · 有数据 " +
+                  x.days +
+                  " 天"
+                );
+              },
+            },
+            xAxis: {
+              type: "value",
+              name: "年度累计分",
+              nameTextStyle: { fontSize: 11, color: "#6b7280" },
+              axisLabel: { formatter: (v) => Math.round(v / 1000) + "k" },
+            },
+            yAxis: {
+              type: "category",
+              inverse: true,
+              data: top.map((x) => x.name),
+              axisLabel: { fontSize: 11 },
+            },
+            series: [
+              {
+                type: "bar",
+                barWidth: "62%",
+                data: top.map((x) => ({
+                  value: Math.round(x.total),
+                  itemStyle: {
+                    color: COLOR[Math.min(6, Math.floor((x.total / maxT) * 6))],
+                  },
+                })),
+                label: {
+                  show: true,
+                  position: "right",
+                  fontSize: 11,
+                  color: "#1f2329",
+                  formatter: (p) => Math.round(p.value),
+                },
+              },
+            ],
+          },
+          true,
+        );
+      }
+      function refreshBottom() {
+        if (!DATA || !chart2) return;
+        const h3 = document.querySelector("#cal h3");
+        const ft = document.querySelector("#cal footer");
+        if (state.view === "rank") {
+          if (h3) h3.style.display = "none";
+          if (ft) ft.style.display = "none";
+          refreshRank();
+        } else {
+          if (h3) h3.style.display = "";
+          if (ft) ft.style.display = "";
+          if (bottomView !== "cal") calReady = false; // 从榜单切回，强制重绘日历
+          refreshCalendar();
+        }
+        bottomView = state.view;
+      }
+
+      function gotoDay(day) {
+        const days = DATA ? DATA.days || 365 : 365;
+        day = Math.max(1, Math.min(days, day));
+        state.day = day;
+        document.getElementById("day").value = day;
+        document.getElementById("dayVal").textContent = day;
+        render();
       }
 
       function fullOption() {
@@ -442,10 +920,18 @@
           tooltip: {
             trigger: "item",
             formatter: (p) => {
+              if (p.seriesName === "年度Top30")
+                return `<b>${p.name}</b><br/>年度累计 <b>${Math.round(p.data.total)}</b>`;
               if (p.seriesType === "scatter") return p.name;
               if (p.value == null || isNaN(p.value))
                 return p.name + "<br/>无数据";
-              return `${p.name}<br/>宜居/宜旅行评分：<b>${p.value}</b>`;
+              const label =
+                state.mode === "relative" ? "相对适宜度" : "绝对舒适度";
+              const sub =
+                state.mode === "relative"
+                  ? "<br/><span style=\"color:#888\">相对当天全国排名（0–100）</span>"
+                  : "";
+              return `${p.name}<br/>${label}：<b>${p.value}</b>${sub}`;
             },
           },
           visualMap: [
@@ -526,6 +1012,21 @@
               render();
             }),
         );
+        document.querySelectorAll("#mode button").forEach(
+          (b) =>
+            (b.onclick = () => {
+              document
+                .querySelectorAll("#mode button")
+                .forEach((x) => x.classList.remove("on"));
+              b.classList.add("on");
+              state.mode = b.dataset.mode;
+              document.getElementById("modeHint").textContent =
+                state.mode === "relative"
+                  ? "按当天所有城市排名归一化（0–100），区分度最高，适合“今天去哪最舒服”。"
+                  : "基于温度与降雨的绝对舒适度（0–100），反映当天实际气候宜人程度，适合看全国整体。";
+              render();
+            }),
+        );
         const link = (id, key, fmt) => {
           const el = document.getElementById(id);
           el.oninput = () => {
@@ -570,6 +1071,14 @@
             }, 1000 / state.speed);
           } else clearInterval(timer);
         };
+        const setBottom = (v) => {
+          state.view = v;
+          document.getElementById("tabCal").classList.toggle("on", v === "cal");
+          document.getElementById("tabRank").classList.toggle("on", v === "rank");
+          refreshBottom();
+        };
+        document.getElementById("tabCal").onclick = () => setBottom("cal");
+        document.getElementById("tabRank").onclick = () => setBottom("rank");
         document.getElementById("reset").onclick = () => {
           Object.assign(state, {
             day: 1,
@@ -578,6 +1087,7 @@
             tmax: 25,
             w: 0.3,
             speed: 4,
+            mode: "relative",
             playing: false,
           });
           clearInterval(timer);
@@ -598,6 +1108,11 @@
             );
           document.getElementById("metricHint").textContent =
             PRESET.livability.hint;
+          document
+            .querySelectorAll("#mode button")
+            .forEach((x) => x.classList.toggle("on", x.dataset.mode === "relative"));
+          document.getElementById("modeHint").textContent =
+            "按当天所有城市排名归一化（0–100），区分度最高，适合“今天去哪最舒服”。";
           document.getElementById("play").textContent = "▶ 播放全年";
           render();
         };
@@ -624,11 +1139,20 @@
             name: c.name,
             value: [c.lon, c.lat],
           }));
+          chart2 = echarts.init(document.getElementById("cal"));
+          chart2.on("click", (pp) => {
+            if (pp.data && pp.data[2] != null) gotoDay(pp.data[2] + 1);
+          });
           bind();
           document.getElementById("metricHint").textContent =
             PRESET.livability.hint;
+          document.getElementById("modeHint").textContent =
+            "按当天所有城市排名归一化（0–100），区分度最高，适合“今天去哪最舒服”。";
           render();
-          window.addEventListener("resize", () => chart.resize());
+          window.addEventListener("resize", () => {
+            chart.resize();
+            chart2.resize();
+          });
         })
         .catch((e) => {
           document.getElementById("topList").textContent = "加载失败：" + e;
