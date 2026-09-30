@@ -1,0 +1,639 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>中国 365 天宜居 / 宜旅行地图</title>
+    <script src="dist/echarts.min.js"></script>
+    <style>
+      :root {
+        --bg: #f7f8fa;
+        --panel: #ffffff;
+        --ink: #1f2329;
+        --sub: #6b7280;
+        --line: #e5e7eb;
+        --accent: #1a9850;
+        --accent2: #2563eb;
+      }
+      * {
+        box-sizing: border-box;
+      }
+      html,
+      body {
+        margin: 0;
+        height: 100%;
+        background: var(--bg);
+        color: var(--ink);
+        font-family:
+          -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC",
+          "Microsoft YaHei", sans-serif;
+      }
+      header {
+        padding: 14px 20px;
+        border-bottom: 1px solid var(--line);
+        background: var(--panel);
+      }
+      header h1 {
+        margin: 0;
+        font-size: 18px;
+        font-weight: 600;
+      }
+      header p {
+        margin: 4px 0 0;
+        font-size: 12px;
+        color: var(--sub);
+      }
+      .wrap {
+        display: flex;
+        height: calc(100% - 58px);
+      }
+      .side {
+        width: 300px;
+        flex: 0 0 300px;
+        padding: 16px;
+        overflow: auto;
+        border-right: 1px solid var(--line);
+        background: var(--panel);
+      }
+      .main {
+        flex: 1;
+        position: relative;
+      }
+      #map {
+        position: absolute;
+        inset: 0;
+      }
+      .block {
+        margin-bottom: 18px;
+      }
+      .block h3 {
+        margin: 0 0 8px;
+        font-size: 13px;
+        font-weight: 600;
+        color: var(--ink);
+      }
+      .seg {
+        display: flex;
+        border: 1px solid var(--line);
+        border-radius: 8px;
+        overflow: hidden;
+      }
+      .seg button {
+        flex: 1;
+        border: 0;
+        background: #fff;
+        padding: 8px 0;
+        font-size: 13px;
+        cursor: pointer;
+        color: var(--sub);
+      }
+      .seg button.on {
+        background: var(--accent);
+        color: #fff;
+        font-weight: 600;
+      }
+      .row {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        margin: 6px 0;
+        font-size: 12px;
+        color: var(--sub);
+      }
+      .row label {
+        flex: 0 0 84px;
+      }
+      .row input[type="range"] {
+        flex: 1;
+      }
+      .row .val {
+        flex: 0 0 48px;
+        text-align: right;
+        font-variant-numeric: tabular-nums;
+        color: var(--ink);
+      }
+      .datebar {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        margin: 6px 0 2px;
+      }
+      .datebar .dlabel {
+        font-size: 20px;
+        font-weight: 700;
+        font-variant-numeric: tabular-nums;
+      }
+      .btns {
+        display: flex;
+        gap: 8px;
+        margin-top: 8px;
+      }
+      .btns button {
+        flex: 1;
+        border: 1px solid var(--line);
+        background: #fff;
+        border-radius: 8px;
+        padding: 8px 0;
+        cursor: pointer;
+        font-size: 13px;
+      }
+      .btns button.primary {
+        background: var(--accent2);
+        color: #fff;
+        border-color: var(--accent2);
+      }
+      .top {
+        font-size: 12px;
+        color: var(--sub);
+        line-height: 1.9;
+      }
+      .top b {
+        color: var(--ink);
+        font-weight: 600;
+      }
+      .tag {
+        display: inline-block;
+        width: 10px;
+        height: 10px;
+        border-radius: 2px;
+        margin-right: 4px;
+        vertical-align: middle;
+      }
+      .hint {
+        font-size: 11px;
+        color: var(--sub);
+        line-height: 1.6;
+        margin-top: 6px;
+      }
+      .layer-row {
+        flex-wrap: wrap;
+        gap: 12px;
+      }
+      .layer-row label {
+        flex: 0 0 auto;
+        display: inline-flex;
+        align-items: center;
+        gap: 4px;
+        cursor: pointer;
+      }
+      .layer-row input {
+        margin: 0;
+      }
+      footer {
+        position: absolute;
+        right: 14px;
+        bottom: 10px;
+        font-size: 11px;
+        color: var(--sub);
+        text-align: right;
+      }
+    </style>
+  </head>
+  <body>
+    <header>
+      <h1>中国 365 天宜居 / 宜旅行地图</h1>
+      <p>
+        基于 Open-Meteo 历史天气（2021–2025 年日均温与降雨，按日历日 5
+        年均值）。拖动滑块与开关即可实时重算。
+      </p>
+    </header>
+    <div class="wrap">
+      <aside class="side">
+        <div class="block">
+          <h3>维度</h3>
+          <div class="seg" id="metric">
+            <button data-m="livability" class="on">宜居</button>
+            <button data-m="travel">宜旅行</button>
+          </div>
+          <div class="hint" id="metricHint"></div>
+        </div>
+
+        <div class="block">
+          <h3>日期</h3>
+          <div class="datebar">
+            <span class="dlabel" id="dateLabel">1月1日</span>
+          </div>
+          <div class="row">
+            <label>年内第几天</label>
+            <input type="range" id="day" min="1" max="365" value="1" />
+            <span class="val" id="dayVal">1</span>
+          </div>
+          <div class="btns">
+            <button id="play" class="primary">▶ 播放全年</button>
+            <button id="reset">恢复默认</button>
+          </div>
+          <div class="row">
+            <label>播放速度</label>
+            <input type="range" id="speed" min="1" max="12" value="4" />
+            <span class="val" id="speedVal">4×</span>
+          </div>
+        </div>
+
+        <div class="block">
+          <h3>舒适温度区间（℃）</h3>
+          <div class="row">
+            <label>下限</label>
+            <input type="range" id="tmin" min="-5" max="30" value="20" />
+            <span class="val" id="tminVal">20</span>
+          </div>
+          <div class="row">
+            <label>上限</label>
+            <input type="range" id="tmax" min="5" max="40" value="25" />
+            <span class="val" id="tmaxVal">25</span>
+          </div>
+        </div>
+
+        <div class="block">
+          <h3>降雨权重</h3>
+          <div class="row">
+            <label>雨 vs 温</label>
+            <input type="range" id="wrain" min="0" max="80" value="30" />
+            <span class="val" id="wrainVal">0.30</span>
+          </div>
+          <div class="hint">
+            权重越高，降雨对评分的影响越大（相对温度）。宜居默认偏温度，宜旅行默认更怕雨。
+          </div>
+        </div>
+
+        <div class="block">
+          <h3>自然地理</h3>
+          <div class="row layer-row">
+            <label><input type="checkbox" id="lyRivers" checked /> 河流</label>
+            <label><input type="checkbox" id="lyLakes" checked /> 湖泊</label>
+            <label><input type="checkbox" id="lyMountains" checked /> 山脉</label>
+          </div>
+          <div class="hint">
+            河流为蓝色折线，湖泊为蓝点，山脉为棕色三角（带名称标注），可单独显隐。
+          </div>
+        </div>
+
+        <div class="block">
+          <h3>当日最适宜（Top 8）</h3>
+          <div class="top" id="topList">加载中…</div>
+        </div>
+      </aside>
+      <div class="main">
+        <div id="map"></div>
+        <footer>
+          数据源：Open-Meteo Historical Archive · 底图：DataV.GeoAtlas
+        </footer>
+      </div>
+    </div>
+
+    <script>
+      const PRESET = {
+        livability: {
+          Wt: 12,
+          k: 18,
+          w: 0.3,
+          label: "宜居",
+          hint: "宜居偏重气候温和稳定：温度区间较严格，降雨影响较小（雨天可室内活动）。",
+        },
+        travel: {
+          Wt: 20,
+          k: 10,
+          w: 0.5,
+          label: "宜旅行",
+          hint: "宜旅行更能容忍温度波动，但更怕雨：降雨权重更高、敏感度更强（雨天影响出行）。",
+        },
+      };
+      const COLOR = [
+        "#b40426",
+        "#f46d43",
+        "#fdae61",
+        "#fee08b",
+        "#a6d96a",
+        "#66bd63",
+        "#1a9850",
+      ];
+
+      const state = {
+        day: 1,
+        metric: "livability",
+        tmin: 20,
+        tmax: 25,
+        w: 0.3,
+        playing: false,
+        speed: 4,
+        layers: { rivers: true, lakes: true, mountains: true },
+      };
+      let DATA = null,
+        chart = null,
+        timer = null,
+        cityPoints = [],
+        GEO_FEATURES = null;
+
+      function doyToDate(d) {
+        const x = new Date(2001, 0, 1);
+        x.setDate(x.getDate() + d - 1);
+        return x.getMonth() + 1 + "月" + x.getDate() + "日";
+      }
+      function tempSuit(T, a, b, Wt) {
+        let d = 0;
+        if (T < a) d = a - T;
+        else if (T > b) d = T - b;
+        return Math.max(0, 1 - d / Wt);
+      }
+      function rainSuit(P, k) {
+        return 1 / (1 + P / k);
+      }
+      function scoreOf(c) {
+        const T = c.T[state.day - 1],
+          P = c.P[state.day - 1];
+        if (T == null) return null;
+        const p = PRESET[state.metric];
+        const ts = tempSuit(T, state.tmin, state.tmax, p.Wt);
+        const rs = rainSuit(P == null ? 0 : P, p.k);
+        return Math.round(100 * ((1 - state.w) * ts + state.w * rs));
+      }
+
+      function layerSeries() {
+        const gf = GEO_FEATURES || { rivers: [], lakes: [], mountains: [] };
+        return [
+          {
+            name: "rivers",
+            type: "lines",
+            coordinateSystem: "geo",
+            polyline: true,
+            silent: true,
+            zlevel: 3,
+            lineStyle: { color: "#2b6cb0", width: 1.6, opacity: 0.75, curveness: 0 },
+            data: state.layers.rivers
+              ? gf.rivers.map((r) => ({ name: r.name, coords: r.coords }))
+              : [],
+          },
+          {
+            name: "lakes",
+            type: "scatter",
+            coordinateSystem: "geo",
+            symbol: "circle",
+            symbolSize: 7,
+            zlevel: 4,
+            itemStyle: { color: "#1c64f2", borderColor: "#fff", borderWidth: 0.6, opacity: 0.9 },
+            label: { show: true, formatter: "{b}", position: "right", fontSize: 10, color: "#1c3f8f" },
+            data: state.layers.lakes
+              ? gf.lakes.map((l) => ({ name: l.name, value: l.coord }))
+              : [],
+          },
+          {
+            name: "mountains",
+            type: "scatter",
+            coordinateSystem: "geo",
+            symbol: "triangle",
+            symbolSize: 10,
+            zlevel: 4,
+            itemStyle: { color: "#8a5a2b", borderColor: "#fff", borderWidth: 0.6 },
+            label: { show: true, formatter: "{b}", position: "top", fontSize: 10, color: "#6b4423" },
+            data: state.layers.mountains
+              ? gf.mountains.map((m) => ({ name: m.name, value: m.coord }))
+              : [],
+          },
+        ];
+      }
+
+      function render() {
+        const mapData = DATA
+          ? DATA.cities.map((c) => ({ name: c.name, value: scoreOf(c) }))
+          : [];
+        chart.setOption({
+          series: [{ data: mapData }, { data: cityPoints }, ...layerSeries()],
+          graphic: [{ id: "dateBig", style: { text: doyToDate(state.day) } }],
+        });
+        if (!DATA) return;
+        // top list
+        const ranked = DATA.cities
+          .map((c) => ({
+            n: c.name,
+            s: scoreOf(c),
+            T: c.T[state.day - 1],
+            P: c.P[state.day - 1],
+          }))
+          .filter((x) => x.s != null)
+          .sort((a, b) => b.s - a.s)
+          .slice(0, 8);
+        document.getElementById("topList").innerHTML = ranked
+          .map(
+            (x, i) =>
+              `<div><span class="tag" style="background:${COLOR[Math.min(6, Math.floor((x.s / 100) * 6))]}"></span>` +
+              `<b>${i + 1}. ${x.n}</b> &nbsp;${x.s}分 · ${x.T}℃ · 雨${x.P}mm</div>`,
+          )
+          .join("");
+        document.getElementById("dateLabel").textContent = doyToDate(state.day);
+      }
+
+      function fullOption() {
+        return {
+          geo: {
+            map: "china",
+            roam: true,
+            zoom: 1.15,
+            scaleLimit: { min: 1, max: 8 },
+            label: { show: false },
+            itemStyle: {
+              borderColor: "#cfd6dd",
+              borderWidth: 0.4,
+              areaColor: "#eef0f2",
+            },
+            emphasis: {
+              label: { show: false },
+              itemStyle: { borderColor: "#333", borderWidth: 1 },
+            },
+          },
+          tooltip: {
+            trigger: "item",
+            formatter: (p) => {
+              if (p.seriesType === "scatter") return p.name;
+              if (p.value == null || isNaN(p.value))
+                return p.name + "<br/>无数据";
+              return `${p.name}<br/>宜居/宜旅行评分：<b>${p.value}</b>`;
+            },
+          },
+          visualMap: [
+            {
+              seriesIndex: 0,
+              min: 0,
+              max: 100,
+              calculable: true,
+              left: 20,
+              bottom: 30,
+              text: ["最适宜", "最不宜"],
+              inRange: { color: COLOR },
+              formatter: (v) => Math.round(v),
+            },
+          ],
+          graphic: [
+            {
+              id: "dateBig",
+              type: "text",
+              left: "center",
+              top: 22,
+              style: {
+                text: "1月1日",
+                fontSize: 42,
+                fontWeight: "bold",
+                fill: "#1f2329",
+                stroke: "#ffffff",
+                lineWidth: 6,
+                textAlign: "center",
+                textVerticalAlign: "middle",
+              },
+            },
+          ],
+          series: [
+            {
+              name: "score",
+              type: "map",
+              geoIndex: 0,
+              data: [],
+              itemStyle: { areaColor: "transparent" },
+              emphasis: {
+                label: { show: false },
+                itemStyle: { borderColor: "#333", borderWidth: 1 },
+              },
+            },
+            {
+              name: "cities",
+              type: "scatter",
+              coordinateSystem: "geo",
+              data: cityPoints,
+              symbolSize: 3.4,
+              itemStyle: { color: "#3a3a3a", opacity: 0.5 },
+              emphasis: {
+                scale: 1.8,
+                itemStyle: { color: "#111", opacity: 1 },
+              },
+              zlevel: 2,
+              tooltip: { show: false },
+            },
+          ],
+        };
+      }
+
+      function bind() {
+        document.querySelectorAll("#metric button").forEach(
+          (b) =>
+            (b.onclick = () => {
+              document
+                .querySelectorAll("#metric button")
+                .forEach((x) => x.classList.remove("on"));
+              b.classList.add("on");
+              state.metric = b.dataset.m;
+              const p = PRESET[state.metric];
+              state.w = p.w;
+              document.getElementById("wrain").value = Math.round(p.w * 100);
+              document.getElementById("wrainVal").textContent = p.w.toFixed(2);
+              document.getElementById("metricHint").textContent = p.hint;
+              render();
+            }),
+        );
+        const link = (id, key, fmt) => {
+          const el = document.getElementById(id);
+          el.oninput = () => {
+            state[key] = +el.value;
+            document.getElementById(id + "Val").textContent = fmt
+              ? fmt(+el.value)
+              : el.value;
+            render();
+          };
+        };
+        link("day", "day");
+        link("tmin", "tmin");
+        link("tmax", "tmax", (v) => v);
+        link("speed", "speed", (v) => v + "×");
+        document.getElementById("wrain").oninput = function () {
+          state.w = +this.value / 100;
+          document.getElementById("wrainVal").textContent = (
+            +this.value / 100
+          ).toFixed(2);
+          render();
+        };
+        ["rivers", "lakes", "mountains"].forEach((k) => {
+          const el = document.getElementById(
+            k === "rivers" ? "lyRivers" : k === "lakes" ? "lyLakes" : "lyMountains",
+          );
+          el.onchange = () => {
+            state.layers[k] = el.checked;
+            render();
+          };
+        });
+        document.getElementById("play").onclick = () => {
+          state.playing = !state.playing;
+          document.getElementById("play").textContent = state.playing
+            ? "⏸ 暂停"
+            : "▶ 播放全年";
+          if (state.playing) {
+            timer = setInterval(() => {
+              state.day = (state.day % 365) + 1;
+              document.getElementById("day").value = state.day;
+              document.getElementById("dayVal").textContent = state.day;
+              render();
+            }, 1000 / state.speed);
+          } else clearInterval(timer);
+        };
+        document.getElementById("reset").onclick = () => {
+          Object.assign(state, {
+            day: 1,
+            metric: "livability",
+            tmin: 20,
+            tmax: 25,
+            w: 0.3,
+            speed: 4,
+            playing: false,
+          });
+          clearInterval(timer);
+          document.getElementById("day").value = 1;
+          document.getElementById("dayVal").textContent = 1;
+          document.getElementById("tmin").value = 20;
+          document.getElementById("tminVal").textContent = 20;
+          document.getElementById("tmax").value = 25;
+          document.getElementById("tmaxVal").textContent = 25;
+          document.getElementById("wrain").value = 30;
+          document.getElementById("wrainVal").textContent = "0.30";
+          document.getElementById("speed").value = 4;
+          document.getElementById("speedVal").textContent = "4×";
+          document
+            .querySelectorAll("#metric button")
+            .forEach((x) =>
+              x.classList.toggle("on", x.dataset.m === "livability"),
+            );
+          document.getElementById("metricHint").textContent =
+            PRESET.livability.hint;
+          document.getElementById("play").textContent = "▶ 播放全年";
+          render();
+        };
+      }
+
+      fetch("china-geo.json")
+        .then((r) => r.json())
+        .then((geo) => {
+          echarts.registerMap("china", geo);
+          chart = echarts.init(document.getElementById("map"));
+          chart.setOption(fullOption());
+          return fetch("geo-features.json");
+        })
+        .then((r) => r.json())
+        .then((gf) => {
+          GEO_FEATURES = gf;
+          render(); // draw rivers/lakes/mountains immediately
+          return fetch("data.json");
+        })
+        .then((r) => r.json())
+        .then((d) => {
+          DATA = d;
+          cityPoints = DATA.cities.map((c) => ({
+            name: c.name,
+            value: [c.lon, c.lat],
+          }));
+          bind();
+          document.getElementById("metricHint").textContent =
+            PRESET.livability.hint;
+          render();
+          window.addEventListener("resize", () => chart.resize());
+        })
+        .catch((e) => {
+          document.getElementById("topList").textContent = "加载失败：" + e;
+          console.error(e);
+        });
+    </script>
+  </body>
+</html>
